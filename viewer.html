@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Block Replay Viewer</title>
+<style>
+  :root { --bg: #111; --fg: #eee; --muted: #888; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; min-height: 100vh; }
+  canvas { width: min(100%, calc((100vh - 110px) * 16 / 9)); aspect-ratio: 16 / 9; background: #000; display: block; }
+  .bar { display: flex; gap: 10px; align-items: center; width: min(100%, calc((100vh - 110px) * 16 / 9)); flex-wrap: wrap; }
+  input[type=range] { flex: 1; min-width: 120px; }
+  button, .file { text-decoration: none; background: #222; color: var(--fg); border: 1px solid #444; border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
+  .time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 110px; text-align: right; }
+  #msg, .credit { color: var(--muted); margin: 0; }
+  .credit a { color: var(--fg); }
+  body.drag canvas { outline: 3px dashed #fdc800; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="bar">
+  <button id="play">Play</button>
+  <input id="seek" type="range" min="0" max="0" value="0">
+  <span class="time" id="time">0.00 / 0.00</span>
+  <label class="file">Open .bin<input id="file" type="file" accept=".bin" hidden></label>
+  <a class="file" href="index.html">With sound</a>
+</div>
+<div id="msg">Loading events.bin (or drop a .bin file here)</div>
+<p class="credit"><a href="https://www.youtube.com/watch?v=IKg3dsc90-A">Demain</a> by P'tit Belliveau</p>
+<script src="replay.js"></script>
+<script>
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+const playBtn = document.getElementById('play'), seek = document.getElementById('seek');
+const timeEl = document.getElementById('time'), msg = document.getElementById('msg');
+
+let clip = null, cursor = null, playing = false, t0 = 0, f0 = 0;
+
+function goTo(target) {
+  cursor.seek(target);
+  seek.value = cursor.frame;
+  timeEl.textContent = `${(cursor.frame / clip.fps).toFixed(2)} / ${((clip.frames.length - 1) / clip.fps).toFixed(2)}`;
+  Replay.draw(ctx, clip, cursor.grid);
+}
+
+function tick(now) {
+  if (!playing) return;
+  const target = f0 + Math.floor((now - t0) / 1000 * clip.fps);
+  if (target >= clip.frames.length - 1) {
+    goTo(clip.frames.length - 1);
+    setPlaying(false);
+    return;
+  }
+  if (target !== cursor.frame) goTo(target);
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(on) {
+  playing = on;
+  playBtn.textContent = on ? 'Pause' : 'Play';
+  if (on) {
+    if (cursor.frame >= clip.frames.length - 1) goTo(0);
+    t0 = performance.now(); f0 = cursor.frame;
+    requestAnimationFrame(tick);
+  }
+}
+
+async function load(buf, name) {
+  let loaded;
+  try {
+    loaded = await Replay.load(buf);
+  } catch (e) {
+    msg.textContent = `Couldn't read ${name}: ${e.message}`;
+    return;
+  }
+  setPlaying(false);
+  clip = loaded;
+  cursor = new Replay.Cursor(clip);
+  seek.max = clip.frames.length - 1;
+  const runs = clip.frames.reduce((s, r) => s + r.length / 3, 0);
+  msg.textContent = `${name}: ${clip.cols}x${clip.rows} half-cell grid, ${clip.frames.length} frames, ${runs} runs`;
+  goTo(0);
+}
+
+playBtn.onclick = () => clip && setPlaying(!playing);
+seek.oninput = () => { if (!clip) return; goTo(+seek.value); if (playing) { t0 = performance.now(); f0 = cursor.frame; } };
+document.addEventListener('keydown', e => {
+  if (!clip) return;
+  if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+  if (e.code === 'ArrowRight') goTo(cursor.frame + 1);
+  if (e.code === 'ArrowLeft') goTo(cursor.frame - 1);
+});
+addEventListener('resize', () => { if (Replay.fitCanvas(canvas) && clip) goTo(cursor.frame); });
+Replay.fitCanvas(canvas);
+
+document.getElementById('file').onchange = async e => {
+  const f = e.target.files[0];
+  if (f) load(await f.arrayBuffer(), f.name);
+};
+document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drag'); });
+document.addEventListener('dragleave', () => document.body.classList.remove('drag'));
+document.addEventListener('drop', async e => {
+  e.preventDefault(); document.body.classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) load(await f.arrayBuffer(), f.name);
+});
+
+const src = new URLSearchParams(location.search).get('src') || 'events.bin';
+fetch(src).then(r => { if (!r.ok) throw 0; return r.arrayBuffer(); })
+  .then(b => load(b, src))
+  .catch(() => { msg.textContent = `No ${src} found. Open or drop a .bin file.`; });
+</script>
+</body>
+</html>

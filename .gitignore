@@ -1,0 +1,9 @@
+# Only the blocks (events.bin) get shared, the source videos and their
+# sound stay local
+work/
+*.mp4
+*.m4a
+*.bin
+!events.bin
+__pycache__/
+.claude/
